@@ -1,0 +1,1053 @@
+task.spawn(function()
+    pcall(function()
+        -- FPSKillerClient.lua (StarterPlayerScripts)
+-- FPS Killer v16 ULTRA (Cliente) - Versão Final (v6 - Integrado: Spam modes + sincronização com clone+slaps)
+ 
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService") 
+local StarterGui = game:GetService("StarterGui")
+local player = Players.LocalPlayer
+ 
+task.wait(1) -- Adiciona uma pequena espera para garantir que todos os serviços estejam carregados
+ 
+-- RemoteEvent
+local eventName = "FPSKillerToggleEvent"
+local toggleEvent = ReplicatedStorage:FindFirstChild(eventName)
+ 
+-- Palavras-chave para localizar tools (flexível)
+local QUANTUM_CLONER_KEYWORDS = {"quantum cloner", "cloner", "quantum"}
+local GLOVE_KEYWORDS = {"glitched slap", "dark matter slap", "nuclear slap", "flame slap", "galaxy slap", "blackhole slap", "alien slap", "lava slap", "candy slap"}
+ 
+-- runtime
+local active = false
+local espActive = true 
+local safeDelay = 0.01 
+local dragging = false
+local clonerInCharacter = false
+local antiLagActive = false 
+local ANTI_LAG_KEYWORD = "K" -- Keybind K mantida
+local originalGraphicsLevel = Enum.QualityLevel.Automatic
+ 
+-- Spam control
+local spamEnabled = false
+local spamReady = false -- só quando true o loop de spam age (usado para esperar clone+slaps)
+local spamModeIndex = 3 -- MUDANÇA 1: Começa no Invisibility (índice 3)
+local spamModes = {"AkunBitch","Lumora","Invisibility"}
+ 
+-- Armazena os visuais do ESP para cada jogador
+local espVisuals = {} 
+ 
+-- Notificação (Normal, para o centro da tela)
+local function notify(text)
+    local gui = Instance.new("ScreenGui", StarterGui) 
+    gui.Name = "FPSKillerV16_Noti"
+    local frame = Instance.new("Frame", gui)
+    frame.Size = UDim2.new(0,230,0,360)
+    frame.Position = UDim2.new(0.5,0,0.30,0)
+    frame.AnchorPoint = Vector2.new(0.5,0)
+    frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+    frame.BorderSizePixel = 0
+    Instance.new("UICorner", frame)
+    local label = Instance.new("TextLabel", frame)
+    label.Size = UDim2.new(1,-20,1,0)
+    label.Position = UDim2.new(0,10,0,0)
+    label.BackgroundTransparency = 1
+    label.Text = "FPS Killer v18\n"..text
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 14
+    label.TextWrapped = true
+    label.TextColor3 = Color3.fromRGB(255,255,255)
+    task.delay(3, function() pcall(function() gui:Destroy() end) end)
+end
+ 
+-- Funções Anti-Lag e visuais
+local function applyClientAntiLag()
+    if not antiLagActive then return end 
+    -- Otimização de Distância (Anti-Lag de objetos distantes)
+    if player and player.Character then
+        local root = player.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+ 
+            for _, obj in ipairs(Workspace:GetChildren()) do
+                if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") and obj ~= player.Character then
+                    local hrp = obj:FindFirstChild("HumanoidRootPart")
+                    if hrp and (root.Position - hrp.Position).Magnitude > 150 then
+                        pcall(function() 
+                            for _, part in ipairs(obj:GetDescendants()) do
+                                if part:IsA("BasePart") then
+                                    part.LocalTransparencyModifier = 1 -- Torna invisível
+                                end
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end
+ 
+-- FUNÇÃO ATUALIZADA (v3): SUPER AGRESSIVA CONTRA ROUPAS 3D/WRAPLAYER
+local function removerRoupas3D(char)
+    if not char then return end
+ 
+    -- Palavras-chave de acessórios que DEVEM SER MANTIDOS (Cabelo, Rosto, Chapéu, etc.)
+    local ACCESSORY_KEEP_KEYWORDS = {
+        "hair", "cabelo", "face", "rosto", "mask", "máscara", "hat", "chapéu", 
+        "cap", "head", "cabeça", "earring", "backpack", "wing", "tail", 
+        "aura", "pet", "horns", "óculos", "glasses"
+    }
+ 
+    local accessoriesToRemove = {}
+ 
+    -- 1. Identifica e destrói acessórios de vestuário
+    for _, child in ipairs(char:GetChildren()) do
+        if child and child:IsA("Accessory") then
+            local nameLower = string.lower(child.Name)
+            local shouldKeep = false
+ 
+            for _, keepKey in ipairs(ACCESSORY_KEEP_KEYWORDS) do
+                if string.find(nameLower, keepKey, 1, true) then
+                    shouldKeep = true
+                    break
+                end
+            end
+ 
+            if not shouldKeep then
+                -- Checagem principal: se for acessório E tiver o indicador Layered Clothing
+                local isLayeredClothing = false
+                if child:FindFirstChild("Handle") then
+                    if child.Handle:FindFirstChildOfClass("WrapLayer") or child:FindFirstChildOfClass("Cloth") then
+                        isLayeredClothing = true
+                    end
+                end
+ 
+                -- Se for Layered Clothing provável, ou se o nome for de roupa
+                if isLayeredClothing or string.find(nameLower, "shirt", 1, true) or string.find(nameLower, "pants", 1, true) or string.find(nameLower, "jacket", 1, true) then
+                    table.insert(accessoriesToRemove, child)
+                end
+            end
+        end
+    end
+ 
+    -- Destrói os acessórios coletados
+    for _, acc in ipairs(accessoriesToRemove) do
+        pcall(function() acc:Destroy() end)
+    end
+ 
+    -- 2. Passagem agressiva: Desabilita qualquer WrapLayer que possa ter sobrado.
+    for _, descendant in ipairs(char:GetDescendants()) do
+        if descendant:IsA("WrapLayer") then
+            pcall(function() 
+                descendant.Enabled = false 
+ 
+                local handle = descendant.Parent
+                if handle and handle:IsA("BasePart") then
+                    handle.Transparency = 1
+                end
+            end)
+        end
+    end
+end
+-- FIM DA FUNÇÃO CORRIGIDA (v3)
+ 
+ 
+local function removeGloveVisualEffects(char)
+    if not char then return end
+    -- Remove efeitos visuais de luvas (partículas, trilhas, etc.)
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") then
+            local name = string.lower(child.Name)
+            local isGlove = false
+            for _, gloveKey in ipairs(GLOVE_KEYWORDS) do
+                if string.find(name, gloveKey, 1, true) then
+                    isGlove = true
+                    break
+                end
+            end
+            if isGlove then
+                for _, effect in ipairs(child:GetDescendants()) do
+                    if effect:IsA("ParticleEmitter") or effect:IsA("Trail") or effect:IsA("Light") or effect:IsA("Decal") or effect:IsA("MeshPart") then
+                        pcall(function() 
+                            effect.Enabled = false
+                            effect.LocalTransparencyModifier = 1
+                            if effect:IsA("BasePart") then
+                                effect.Transparency = 1
+                            end
+                        end)
+                    elseif effect:IsA("BasePart") and effect.Name ~= "Handle" then
+                            pcall(function() 
+                                effect.Transparency = 1
+                            end)
+                    end
+                end
+            end
+        end
+    end
+end
+ 
+local function applyAntiLagToClones()
+    if not active and not antiLagActive then return end 
+    local char = player.Character
+    if not char then return end
+    removerRoupas3D(char)
+    removeGloveVisualEffects(char)
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") and obj ~= char then
+            local isPlayerChar = Players:GetPlayerFromCharacter(obj)
+            if not isPlayerChar then
+                removerRoupas3D(obj)
+                removeGloveVisualEffects(obj)
+            end
+        end
+    end
+end
+ 
+local function findToolByKeywords(keywordList, toolName)
+    local function matches(name)
+        if not name then return false end
+        local ln = string.lower(name)
+        for _, key in ipairs(keywordList) do
+            if string.find(ln, key, 1, true) then return true end
+        end
+        return false
+    end
+ 
+    if toolName then 
+        return matches(toolName)
+    end
+ 
+    local foundTool = nil
+    local char = player.Character
+    if char then
+        for _, obj in ipairs(char:GetChildren()) do
+            if obj:IsA("Tool") and matches(obj.Name) then foundTool = obj; break end
+        end
+    end
+    if foundTool then return foundTool end
+ 
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, obj in ipairs(bp:GetChildren()) do
+            if obj:IsA("Tool") and matches(obj.Name) then foundTool = obj; break end
+        end
+    end
+    return foundTool
+end
+ 
+-- FUNÇÃO: Desequipa todos os Tools do Character e os move para o Backpack.
+local function unequipAllItems()
+    local char = player.Character
+    local bp = player:FindFirstChild("Backpack")
+    if not char or not bp then return end
+ 
+    -- Move todos os tools do Character (equipados) para o Backpack
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") then
+            pcall(function() child.Parent = bp end)
+        end
+    end
+end
+ 
+-- Função utilitária: limpa todas as ferramentas (usada ao ligar spam / trocar modo)
+local function clearAllTools()
+    local char = player.Character
+    local bp = player:FindFirstChild("Backpack")
+    if not bp then return end
+    if char then
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") then
+                pcall(function() t.Parent = bp end)
+            end
+        end
+    end
+end
+ 
+local function equipTool(tool, activateTool)
+    if not tool then return end
+    local char = player.Character
+    if not char then return end
+    if tool.Parent ~= char then pcall(function() tool.Parent = char end) end
+    if activateTool then
+        pcall(function()
+            if typeof(tool.Activate) == "function" then
+                pcall(function() tool:Activate() end)
+            else
+                local evt = tool:FindFirstChildWhichIsA("RemoteEvent")
+                if evt then pcall(function() evt:FireServer() end) end
+            end
+        end)
+    end
+end
+ 
+-- FUNÇÃO: Ativação única do FPS Killer
+local function activateFPSKiller()
+    local char = player.Character
+    if not char then return end
+ 
+    pcall(unequipAllItems)
+ 
+    local quantumClonerTool = findToolByKeywords(QUANTUM_CLONER_KEYWORDS)
+ 
+    if quantumClonerTool then 
+        pcall(function() equipTool(quantumClonerTool, true) end) 
+    end
+ 
+    for _, k in ipairs(GLOVE_KEYWORDS) do
+        local glove = findToolByKeywords({k})
+        if glove then  
+            pcall(function() equipTool(glove, false) end)
+        end
+    end
+end
+ 
+-- Wait for important services to be ready
+repeat task.wait() until game:IsLoaded()
+ 
+local a=string.char
+local b=game:GetService(a(80,108,97,121,101,114,115))
+local c=game:GetService(a(82,117,110,83,101,114,118,105,99,101))
+local d=game:GetService(a(83,116,97,114,116,101,114,71,117,105))
+local e=game:GetService(a(85,115,101,114,73,110,112,117,116,83,101,114,118,105,99,101))
+ 
+local f=b.LocalPlayer
+local g=true -- Mantém o ESP sempre ativo
+local h=true
+local i=Color3.fromRGB(0,0,255)
+local j=Color3.fromRGB(255,0,0)
+ 
+local nameMode = "displayname" -- Default name mode
+ 
+local function o(p)
+    return h and p.TeamColor.Color or ((f.TeamColor == p.TeamColor) and i or j)
+end
+ 
+local function q(r, s)
+    if not r:IsDescendantOf(workspace) then return end
+    local t = r:FindFirstChild(a(71,101,116,82,101,97,108))
+    if not t then
+        t = Instance.new(a(72,105,103,104,108,105,103,104,116))
+        t.Name = a(71,101,116,82,101,97,108)
+        t.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        t.Parent = r
+    end
+    t.FillColor = s
+    t.OutlineColor = s
+    t.Enabled = g
+end
+ 
+local function u(v)
+    local w = v.Character
+    if not w then return end
+    local x = w:FindFirstChild(a(72,117,109,97,110,111,105,100,82,111,111,116,80,97,114,116)) or w:FindFirstChild(a(84,111,114,115,111)) or w:FindFirstChild(a(85,112,112,101,114,84,111,114,115,111))
+    if not x then return end
+    local y = x:FindFirstChild(a(66,111,120,69,83,80))
+    if not y then
+        y = Instance.new(a(66,111,120,72,97,110,100,108,101,65,100,111,114,110,109,101,110,116))
+        y.Name = a(66,111,120,69,83,80)
+        y.Size = Vector3.new(2,3,2)
+        y.Adornee = x
+        y.AlwaysOnTop = true
+        y.ZIndex = 5
+        y.Transparency = 0.5
+        y.Parent = x
+    end
+    y.Color3 = o(v)
+    y.Visible = g
+end
+ 
+local function z(v)
+    local w = v.Character
+    if not w or not w:FindFirstChild(a(72,101,97,100)) then return end
+    local A = w.Head
+    local B = A:FindFirstChild(a(78,97,109,101,69,83,80))
+    if not B then
+        B = Instance.new(a(66,105,108,108,98,111,97,114,100,71,117,105))
+        B.Name = a(78,97,109,101,69,83,80)
+        B.Size = UDim2.new(0,200,0,50)
+        B.AlwaysOnTop = true
+        local C = Instance.new(a(84,101,120,116,76,97,98,101,108))
+        C.Name = a(78,97,109,101,76,97,98,101,108)
+        C.BackgroundTransparency = 1
+        C.Size = UDim2.new(1,0,1,0)
+        C.Font = Enum.Font.SourceSansBold
+        C.TextSize = 16
+        C.TextStrokeTransparency = 0.5
+        C.Parent = B
+        B.Parent = A
+    end
+    local C = B:FindFirstChild(a(78,97,109,101,76,97,98,101,108))
+    if C then
+        local D = 0
+        if f.Character and f.Character:FindFirstChild(a(72,117,109,97,110,111,105,100,82,111,111,116,80,97,114,116)) then
+            D = (f.Character.HumanoidRootPart.Position - A.Position).magnitude
+        end
+ 
+        local nameText = v.DisplayName
+        if nameMode == "username" then
+            nameText = v.Name
+        elseif nameMode == "both" then
+            nameText = string.format("%s (%s)", v.DisplayName, v.Name)
+        end
+ 
+        C.Text = string.format("%s [%dm]", nameText, math.floor(D))
+        C.TextColor3 = o(v)
+        C.Visible = g
+        B.StudsOffset = Vector3.new(0, 2 + math.clamp(D/50, 0, 5), 0)
+    end
+end
+ 
+local function E()
+    for F,G in ipairs(b:GetPlayers()) do
+        if G ~= f and G.Character then
+            q(G.Character, o(G))
+            z(G)
+            u(G)
+        end
+    end
+end
+ 
+local function J(K)
+    repeat task.wait() until K:FindFirstChild(a(72,117,109,97,110,111,105,100)) and K:FindFirstChild(a(72,101,97,100))
+    E()
+end
+ 
+b.PlayerAdded:Connect(function(L)
+    if L and L.CharacterAdded then
+        L.CharacterAdded:Connect(J)
+    end
+end)
+ 
+for F,G in ipairs(b:GetPlayers()) do
+    if G ~= f and G.CharacterAdded then
+        G.CharacterAdded:Connect(J)
+    end
+end
+ 
+c.Heartbeat:Connect(E)
+ 
+ 
+-- Loop principal do ESP (execução a cada frame)
+c.Heartbeat:Connect(E)
+ 
+-- loop rápido (ANTI-LAG, CLONES, ESP)
+RunService.RenderStepped:Connect(function()
+ 
+    if active or antiLagActive then
+        pcall(applyAntiLagToClones)
+    end
+ 
+    if antiLagActive then
+        pcall(applyClientAntiLag)
+    end
+ 
+    -- Checagem de desativação (Segurança)
+    if active then
+        local quantumClonerTool = findToolByKeywords(QUANTUM_CLONER_KEYWORDS)
+        local anyGloveFound = false
+        for _, k in ipairs(GLOVE_KEYWORDS) do
+            if findToolByKeywords({k}) then anyGloveFound = true; break end
+        end
+ 
+        local isClonerEquipped = quantumClonerTool and quantumClonerTool.Parent == player.Character
+        local clonerJustUnequipped = clonerInCharacter and not isClonerEquipped
+        clonerInCharacter = isClonerEquipped
+ 
+        if clonerJustUnequipped and not anyGloveFound then
+            active = false
+            if toggleEvent then pcall(function() toggleEvent:FireServer("RequestToggle") end) end
+            notify("FPS Killer desativado (Clone/Luva perdidos/desequipados).")
+            local gui = CoreGui:FindFirstChild("FPSKillerGUI")
+            if gui then 
+                local toggleBtn = gui:FindFirstChildWhichIsA("Frame"):FindFirstChildOfClass("TextButton")
+                if toggleBtn and toggleBtn.Position.Y.Offset == 35 then 
+                    toggleBtn.BackgroundColor3 = Color3.fromRGB(180,60,60)
+                    toggleBtn.Text = "FPS Killer (G): OFF"
+                end
+            end
+        end
+    end
+ 
+    if espActive then
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player then
+                pcall(updatePlayerESP, p)
+            end
+        end
+    else
+        for _, p in ipairs(Players:GetPlayers()) do
+            pcall(removeESPVisualsForPlayer, p)
+        end
+    end
+ 
+    task.wait(safeDelay)
+end)
+ 
+-- FUNÇÃO ATUALIZADA: Otimização visual pesada (retira texturas/materiais + SUPER FPS BOOST)
+local function setVisualAntiLag(enable)
+    local lighting = Workspace:FindFirstChildOfClass("Lighting")
+    local camera = Workspace.CurrentCamera
+ 
+    if enable then
+        -- 1. Salva o nível gráfico original e força o mínimo (Máximo FPS)
+        if game:GetService("UserSettings") and game:GetService("UserSettings").GameSettings then
+             originalGraphicsLevel = game:GetService("UserSettings").GameSettings.SavedQualityLevel.Value
+             game:GetService("UserSettings").GameSettings.SavedQualityLevel = Enum.QualityLevel.Level1 -- Mínimo
+             game:GetService("RenderingService").TextureStreamingEnabled = false -- Tenta desativar streaming de textura
+             game:GetService("ContentProvider").RequestQueueSize = 0 -- Reduz fila de requisição de conteúdo
+        end
+ 
+        -- 2. Otimiza a Iluminação/Efeitos (Elimina sombras/reflexos)
+        if lighting then
+            pcall(function()
+                lighting.GlobalShadows = false
+                lighting.Ambient = Color3.new(1, 1, 1) -- Clareia o ambiente
+                lighting.OutdoorAmbient = Color3.new(1, 1, 1)
+                lighting.Brightness = 0 -- Evita o cálculo de luz intensa
+ 
+                for _, effect in ipairs(lighting:GetChildren()) do
+                    if effect:IsA("SunRaysEffect") or effect:IsA("BloomEffect") or effect:IsA("ColorCorrectionEffect") or effect:IsA("DepthOfFieldEffect") or effect:IsA("BlurEffect") then
+                        effect.Enabled = false
+                    end
+                end
+            end)
+        end
+ 
+        -- 3. Otimização do Terreno
+        if Workspace.Terrain then
+            pcall(function() Workspace.Terrain.Decoration = false end)
+        end
+ 
+        -- 4. Otimização da Câmera (Reduz o FOV para renderizar menos)
+        if camera then
+            pcall(function() camera.FieldOfView = 60 end) 
+        end
+ 
+        -- 5. Altera Materiais de Partes Pesadas (simula remoção de textura)
+        task.spawn(function()
+            for _, descendant in ipairs(Workspace:GetDescendants()) do
+                if descendant:IsA("BasePart") and descendant.CustomPhysicalProperties == nil then
+                    pcall(function()
+                        descendant.Material = Enum.Material.Plastic -- Material mais simples (liso)
+                        descendant.CastShadow = false
+ 
+                        -- Remove decals/textures, trilhas e partículas
+                        for _, child in ipairs(descendant:GetChildren()) do
+                            if child:IsA("Decal") or child:IsA("Texture") or child:IsA("Trail") or child:IsA("ParticleEmitter") then
+                                child:Destroy()
+                            end
+                        end
+                    end)
+                end
+            end
+        end)
+ 
+    else -- DESABILITAR (Restaura)
+        -- 1. Restaura o nível gráfico
+        if game:GetService("UserSettings") and game:GetService("UserSettings").GameSettings then
+            game:GetService("UserSettings").GameSettings.SavedQualityLevel = originalGraphicsLevel
+            game:GetService("RenderingService").TextureStreamingEnabled = true 
+            game:GetService("ContentProvider").RequestQueueSize = 10 
+        end
+ 
+        -- 2. Restaura iluminação (parcialmente)
+        if lighting then
+            pcall(function()
+                lighting.GlobalShadows = true
+                lighting.Ambient = Color3.new(0, 0, 0) 
+                lighting.OutdoorAmbient = Color3.new(0, 0, 0) 
+                lighting.Brightness = 2 
+            end)
+        end
+ 
+        -- 3. Restaura o Terreno (Decoration)
+        if Workspace.Terrain then
+            pcall(function() Workspace.Terrain.Decoration = true end)
+        end
+ 
+        -- 4. Restaura a Câmera
+        if camera then
+            pcall(function() camera.FieldOfView = 70 end) 
+        end
+    end
+end
+ 
+ 
+-- --- GUI e Controles ---
+pcall(function()
+    -- LIMPEZA INICIAL
+    for _, name in ipairs({"FPSKillerV18_Main","FPSKillerV18_Noti","FPSKillerV18_Key","ESPPlayers","FPSKillerGUI", "FPSKiller_WelcomeNoti"}) do
+        if CoreGui:FindFirstChild(name) then CoreGui[name]:Destroy() end
+        if StarterGui:FindFirstChild(name) then StarterGui[name]:Destroy() end
+    end
+end)
+ 
+local mainGuiFrame -- Variável para referenciar o frame da GUI principal
+ 
+do
+    -- CRIAÇÃO DA GUI
+    local guiFPS = Instance.new("ScreenGui", CoreGui)
+    guiFPS.Name = "FPSKillerGUI"
+    local frame = Instance.new("Frame", guiFPS)
+    mainGuiFrame = frame -- Armazena a referência
+    -- === GUI MAIOR PARA CABER BOTÕES ===
+    frame.Size = UDim2.new(0,230,0,230)
+    frame.Position = UDim2.new(0.5,0,0.5,0)
+    frame.AnchorPoint = Vector2.new(0.5,0.5)
+    frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+    frame.BorderSizePixel = 0
+    Instance.new("UICorner", frame)
+    frame.Active = true
+    frame.Draggable = true
+-- ... (restante da criação dos botões e labels) ...
+    local title = Instance.new("TextLabel", frame)
+    title.Size = UDim2.new(1,0,0,25)
+    title.Position = UDim2.new(0,0,0,5)
+    title.BackgroundTransparency = 1
+    title.Text = "☠ FPS Killer v18 ☠"
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 18
+    title.TextColor3 = Color3.fromRGB(255,255,255)
+ 
+    -- Botão FPS Killer
+    local toggleBtn = Instance.new("TextButton", frame)
+    toggleBtn.Size = UDim2.new(1,-20,0,45)
+    toggleBtn.Position = UDim2.new(0,10,0,35)
+    toggleBtn.Text = "FPS Killer (G): OFF"
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.TextSize = 16
+    toggleBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(180,60,60)
+    Instance.new("UICorner", toggleBtn)
+ 
+    -- Botão ESP 
+    local espBtn = Instance.new("TextButton", frame)
+    espBtn.Size = UDim2.new(1,-20,0,25)
+    espBtn.Position = UDim2.new(0,10,0,85)
+    espBtn.Text = "Esp (J): ON"
+    espBtn.BackgroundColor3 = Color3.fromRGB(60,180,60) 
+    espBtn.Font = Enum.Font.GothamBold
+    espBtn.TextSize = 14
+    espBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    Instance.new("UICorner", espBtn)
+ 
+    -- Botão Anti-Lag
+    local antiLagBtn = Instance.new("TextButton", frame)
+    antiLagBtn.Size = UDim2.new(1,-20,0,25)
+    antiLagBtn.Position = UDim2.new(0,10,0,115) 
+    antiLagBtn.Text = "Anti-Lag/FPS ("..ANTI_LAG_KEYWORD.."): OFF"
+    antiLagBtn.Font = Enum.Font.GothamBold
+    antiLagBtn.TextSize = 14
+    antiLagBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    antiLagBtn.BackgroundColor3 = Color3.fromRGB(120,120,120) 
+    Instance.new("UICorner", antiLagBtn)
+ 
+    -- === BLOCO ADICIONAL: SPAM & MODO ===
+    local spamBtn = Instance.new("TextButton", frame)
+    spamBtn.Size = UDim2.new(1,-20,0,25)
+    spamBtn.Position = UDim2.new(0,10,0,145)
+    spamBtn.Text = "Spam: OFF" -- MUDANÇA 2b: Texto inicial "OFF"
+    spamBtn.Font = Enum.Font.GothamBold
+    spamBtn.TextSize = 14
+    spamBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    spamBtn.BackgroundColor3 = Color3.fromRGB(120, 120, 120) -- CINZA -- MUDANÇA 2b: Cor inicial cinza (OFF)
+    Instance.new("UICorner", spamBtn)
+ 
+    local modeBtn = Instance.new("TextButton", frame)
+    modeBtn.Size = UDim2.new(1,-20,0,25)
+    modeBtn.Position = UDim2.new(0,10,0,175)
+    modeBtn.Text = "Modo Spam: "..spamModes[spamModeIndex]
+    modeBtn.Font = Enum.Font.GothamBold
+    modeBtn.TextSize = 14
+    modeBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    modeBtn.BackgroundColor3 = Color3.fromRGB(80,80,140)
+    Instance.new("UICorner", modeBtn)
+ 
+    -- Rodapé (ajustado para nova altura)
+    local footer = Instance.new("TextLabel", frame)
+    footer.Size = UDim2.new(1, 0, 0, 25)
+    footer.Position = UDim2.new(0, 0, 1, -25)
+    footer.AnchorPoint = Vector2.new(0, 0)
+    footer.BackgroundTransparency = 1
+    footer.Text = "discord pra suporte: tiodaesfiha79813" 
+    footer.Font = Enum.Font.Gotham
+    footer.TextSize = 12
+    footer.TextColor3 = Color3.fromRGB(200,200,200)
+    footer.TextXAlignment = Enum.TextXAlignment.Center 
+ 
+    -- Utilitário: achar tool por nome exato (Character e Backpack)
+    local function findToolByNameExact(name)
+        if not name then return nil end
+        local char = player.Character
+        if char then
+            for _,c in ipairs(char:GetChildren()) do
+                if c:IsA("Tool") and string.lower(c.Name) == string.lower(name) then return c end
+            end
+        end
+        local bp = player:FindFirstChild("Backpack")
+        if bp then
+            for _,c in ipairs(bp:GetChildren()) do
+                if c:IsA("Tool") and string.lower(c.Name) == string.lower(name) then return c end
+            end
+        end
+        return nil
+    end
+ 
+    local function unequipTool(tool)
+        if not tool then return end
+        local bp = player:FindFirstChild("Backpack")
+        if bp then
+            pcall(function() tool.Parent = bp end)
+        end
+    end
+ 
+    -- Spam loop (rodando em thread de background)
+    local spamThread = nil
+    spamThread = task.spawn(function()
+        local toggle = false
+        while true do
+            if spamEnabled and active and spamReady then
+                local mode = spamModes[spamModeIndex]
+ 
+                if mode == "AkunBitch" then
+                    -- alterna entre Medusa's Head e Bat, 1 por vez, 0.05s
+                    toggle = not toggle
+                    -- remove tools equipados (garante 1 por vez)
+                    local char = player.Character
+                    if char then
+                        for _,t in ipairs(char:GetChildren()) do
+                            if t:IsA("Tool") then
+                                pcall(function() unequipTool(t) end)
+                            end
+                        end
+                    end
+ 
+                    local aName = "Medusa's Head"
+                    local bName = "Bat"
+                    local toolName = toggle and aName or bName
+                    local tool = findToolByNameExact(toolName)
+                    if tool then
+                        pcall(function() equipTool(tool, false) end)
+                    end
+ 
+                    -- espera 0.05s em pequenos passos para checar condição
+                    local waited = 0
+                    while waited < 0.01 do
+                        task.wait(0.001)
+                        waited = waited + 0.001
+                        if not spamEnabled or not active or spamModes[spamModeIndex] ~= "AkunBitch" then break end
+                    end
+ 
+                elseif mode == "Lumora" then
+                    -- equip/desequip Bat super rápido 0.01s
+                    local name = "Bat"
+                    local bat = findToolByNameExact(name)
+                    if bat then
+                        pcall(function() equipTool(bat, false) end)
+                        local waited = 0
+                        while waited < 0.01 do
+                            task.wait(0.001)
+                            waited = waited + 0.001
+                            if not spamEnabled or not active or spamModes[spamModeIndex] ~= "Lumora" then break end
+                        end
+                        if not spamEnabled or not active or spamModes[spamModeIndex] ~= "Lumora" then
+                            -- do nothing
+                        else
+                            pcall(function() unequipTool(bat) end)
+                            local waited2 = 0
+                            while waited2 < 0.01 do
+                                task.wait(0.001)
+                                waited2 = waited2 + 0.001
+                                if not spamEnabled or not active or spamModes[spamModeIndex] ~= "Lumora" then break end
+                            end
+                        end
+                    else
+                        -- se não tem bat, espera 0.01
+                        task.wait(0.01)
+                    end
+ 
+                elseif mode == "Invisibility" then
+                    -- Invisibility Cloak: equipa e usa, espera ~1s, desequipa e repete
+                    local name = "Invisibility Cloak"
+                    local cloak = findToolByNameExact(name)
+                    if cloak then
+                        pcall(function() equipTool(cloak, true) end)
+                        local waited = 0
+                        while waited < 1.0 do
+                            task.wait(0.05)
+                            waited = waited + 0.05
+                            if not spamEnabled or not active or spamModes[spamModeIndex] ~= "Invisibility" then break end
+                        end
+                        if not spamEnabled or not active or spamModes[spamModeIndex] ~= "Invisibility" then
+                            -- do nothing, loop will continue
+                        else
+                            pcall(function() unequipTool(cloak) end)
+                            task.wait(0.05)
+                        end
+                    else
+                        task.wait(1.0)
+                    end
+ 
+                else
+                    task.wait(0.05)
+                end
+ 
+            else
+                -- spam disabled or FPS Killer not active or not ready: wait shortly
+                task.wait(0.08)
+            end
+        end
+    end)
+ 
+    -- Botões conexões
+    spamBtn.MouseButton1Click:Connect(function()
+        spamEnabled = not spamEnabled
+        spamReady = false
+        spamBtn.BackgroundColor3 = spamEnabled and Color3.fromRGB(60,180,60) or Color3.fromRGB(120,120,120)
+        spamBtn.Text = "Spam: "..(spamEnabled and "ON" or "OFF")
+        if spamEnabled then
+            notify("Spam: ON ("..spamModes[spamModeIndex]..")")
+            clearAllTools() -- limpa tudo antes de começar
+            if active then
+                -- espera clone+slaps rodarem
+                task.spawn(function()
+                    task.wait(0.8)
+                    if active and spamEnabled then
+                        clearAllTools() -- <<< ADICIONADO: limpa clone+slaps DEPOIS da espera e antes de liberar spam
+                        spamReady = true
+                    end
+                end)
+            end
+        else
+            notify("Spam: OFF")
+            spamReady = false
+        end
+    end)
+ 
+    modeBtn.MouseButton1Click:Connect(function()
+        spamModeIndex = spamModeIndex + 1
+        if spamModeIndex > #spamModes then spamModeIndex = 1 end
+        modeBtn.Text = "Modo Spam: "..spamModes[spamModeIndex]
+        notify("Modo Spam: "..spamModes[spamModeIndex])
+ 
+        if spamEnabled then
+            clearAllTools() -- remove o que estava do modo anterior
+            -- se já ativo, montar readiness: espera curta pra garantir limpeza
+            task.spawn(function()
+                task.wait(0.06)
+                if active and spamEnabled then spamReady = true end
+            end)
+        end
+    end)
+    -- === FIM BLOCO SPAM/MODO ===
+ 
+    local function requestToggle()
+        local willBeActive = not active
+ 
+        if willBeActive then
+            pcall(unequipAllItems)
+            pcall(activateFPSKiller)
+        end
+ 
+        if toggleEvent then
+            pcall(function() toggleEvent:FireServer("RequestToggle") end)
+        end
+ 
+        active = willBeActive
+ 
+        toggleBtn.BackgroundColor3 = active and Color3.fromRGB(60,180,60) or Color3.fromRGB(180,60,60)
+        toggleBtn.Text = "FPS Killer (G): ".. (active and "ON" or "OFF")
+        notify(active and "FPS Killer ativado (ativação única)." or "FPS Killer desativado (sem interferência).")
+ 
+        -- se ativou e spam já estava ON, espera o clone+slaps e só então permite spam
+        if active and spamEnabled then
+            spamReady = false
+            task.spawn(function()
+                task.wait(0.8)
+                if active and spamEnabled then
+                    clearAllTools() -- <<< ADICIONADO: limpa clone+slaps DEPOIS da espera e antes de liberar spam
+                    spamReady = true
+                end
+            end)
+        else
+            spamReady = false
+        end
+    end
+ 
+    local function toggleAntiLag()
+        antiLagActive = not antiLagActive
+ 
+        -- AÇÃO PRINCIPAL: Chama a função Super FPS Boost
+        pcall(setVisualAntiLag, antiLagActive) 
+ 
+        antiLagBtn.BackgroundColor3 = antiLagActive and Color3.fromRGB(60,60,180) or Color3.fromRGB(120,120,120)
+        antiLagBtn.Text = "Anti-Lag/FPS ("..ANTI_LAG_KEYWORD.."): ".. (antiLagActive and "ON" or "OFF")
+        notify(antiLagActive and "Super FPS Boost Ativado!" or "Anti-Lag Desativado. Gráficos restaurados.")
+ 
+    end
+ 
+    local function toggleESP()
+        espActive = not espActive
+        espBtn.BackgroundColor3 = espActive and Color3.fromRGB(60,180,60) or Color3.fromRGB(180,60,60)
+        espBtn.Text = "Esp (J): ".. (espActive and "ON" or "OFF")
+ 
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player then
+                if espActive then
+                    pcall(updatePlayerESP, p)
+                else
+                    pcall(removeESPVisualsForPlayer, p)
+                end
+            end
+        end
+ 
+        notify(espActive and "ESP Ativado" or "ESP Desativado")
+    end
+ 
+    toggleBtn.MouseButton1Click:Connect(requestToggle) 
+    espBtn.MouseButton1Click:Connect(toggleESP) 
+    antiLagBtn.MouseButton1Click:Connect(toggleAntiLag) 
+ 
+    UIS.InputBegan:Connect(function(input, processed)
+        if not processed and input.KeyCode == Enum.KeyCode.G then requestToggle() end
+        if not processed and input.KeyCode == Enum.KeyCode.J then toggleESP() end 
+        if not processed and string.upper(input.KeyCode.Name) == ANTI_LAG_KEYWORD then toggleAntiLag() end 
+    end)
+ 
+    -- character hooks (manutenção)
+    player.CharacterAdded:Connect(function(char)
+        char:WaitForChild("HumanoidRootPart", 5)
+        task.wait(0.25)
+        removerRoupas3D(char)
+        if active then 
+            clonerInCharacter = false
+        end
+        removeESPVisualsForPlayer(player) 
+    end)
+ 
+    if player.Character then
+        player.Character:WaitForChild("HumanoidRootPart", 5)
+        task.defer(removerRoupas3D, player.Character)
+    end
+end
+ 
+-- Inicialização e Conexões (manutenção)
+if espActive then
+    for _, p in ipairs(Players:GetPlayers()) do 
+        pcall(updatePlayerESP, p) 
+    end
+end
+ 
+if toggleEvent then
+    toggleEvent.OnClientEvent:Connect(function(cmd, arg)
+        if cmd == "SetActive" then
+            local wasActive = active
+            active = arg and true or false
+ 
+            if active and not wasActive then
+                pcall(unequipAllItems)
+                pcall(activateFPSKiller)
+            end
+ 
+            local gui = CoreGui:FindFirstChild("FPSKillerGUI")
+            if gui then
+                local frame = gui:FindFirstChildWhichIsA("Frame")
+                if frame then
+                    local toggleBtn = frame:FindFirstChildOfClass("TextButton")
+                    if toggleBtn and toggleBtn.Position.Y.Offset == 35 then 
+                        toggleBtn.BackgroundColor3 = active and Color3.fromRGB(60,180,60) or Color3.fromRGB(180,60,60)
+                        toggleBtn.Text = "FPS Killer (G): ".. (active and "ON" or "OFF")
+                    end
+                end
+            end
+            notify(active and "FPS Killer ativado (servidor)." or "FPS Killer desativado (servidor).")
+ 
+            -- sincroniza spamReady se necessário
+            if active and spamEnabled then
+                spamReady = false
+                task.spawn(function() 
+                    task.wait(0.8) 
+                    if active and spamEnabled then
+                        clearAllTools() -- <<< ADICIONADO: limpa clone+slaps DEPOIS da espera e antes de liberar spam
+                        spamReady = true 
+                    end 
+                end)
+            else
+                spamReady = false
+            end
+ 
+        elseif cmd == "SetDelay" then
+            if type(arg) == "number" then safeDelay = arg end
+        elseif cmd == "Denied" then
+            notify(arg or "Ação negada.")
+        end
+    end)
+end
+ 
+-- --- NOTIFICAÇÃO DE BOAS-VINDAS ANIMADA (AGORA ACIMA DA GUI) ---
+pcall(function()
+    local gui = Instance.new("ScreenGui", CoreGui) 
+    gui.Name = "FPSKiller_WelcomeNoti"
+    local frame = Instance.new("Frame", gui)
+    local NOTI_HEIGHT = 70
+    local MAIN_GUI_HALF_HEIGHT = 360/2
+    local MARGIN = 10
+ 
+    frame.Size = UDim2.new(0, 300, 0, NOTI_HEIGHT)
+ 
+    -- Calcula o deslocamento final (target Y offset)
+    local targetYOffset = -MAIN_GUI_HALF_HEIGHT - MARGIN
+ 
+    -- Posição final (VISÍVEL): Centralizada (0.5) e acima da GUI principal (targetYOffset)
+    local finalPosition = UDim2.new(0.5, 0, 0.5, targetYOffset)
+ 
+    -- Posição inicial (ESCONDIDA): Apenas a altura da notificação mais alta (NOTI_HEIGHT)
+    local initialPosition = UDim2.new(0.5, 0, 0.5, targetYOffset - NOTI_HEIGHT)
+ 
+    frame.Position = initialPosition -- Começa escondida, mais para cima
+    frame.AnchorPoint = Vector2.new(0.5, 1) -- Âncora no centro inferior (para crescer para baixo)
+ 
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    frame.BorderSizePixel = 0
+    Instance.new("UICorner", frame)
+    local label = Instance.new("TextLabel", frame)
+    label.Size = UDim2.new(1, -20, 1, 0)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = "FPS Killer v18: Executado!\n(G) para Ativar/Desativar o FPS KILLER"
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 14
+    label.TextWrapped = true
+    label.TextColor3 = Color3.fromRGB(0, 255, 0)
+ 
+    local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out, 0, false, 0)
+ 
+    -- Tween para MOSTRAR (desce até a posição final)
+    local showTween = TweenService:Create(frame, tweenInfo, {Position = finalPosition})
+    -- Tween para ESCONDER (volta para a posição inicial)
+    local hideTween = TweenService:Create(frame, tweenInfo, {Position = initialPosition})
+ 
+    showTween:Play()
+    showTween.Completed:Wait()
+ 
+    task.delay(4, function() 
+        pcall(function() 
+            hideTween:Play()
+            hideTween.Completed:Wait()
+            gui:Destroy()
+        end) 
+    end)
+end)
+ 
+ 
+        local Players = game:GetService("Players")
+        local RunService = game:GetService("RunService")
+        local UIS = game:GetService("UserInputService")
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        --... TODO O RESTANTE DO SCRIPT AQUI...
+    end)
+end)
